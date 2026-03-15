@@ -1,0 +1,211 @@
+#!/bin/bash
+
+TASK_FILE="$HOME/.config/task_for_bash/.tasks.txt"
+
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+RED="\033[0;31m"
+MAGENTA="\033[1;35m"
+RESET="\033[0m"
+
+calculate_task_age() {
+    local created=$1
+    local now=$(date +%s)
+    local total_seconds=$((now - created))
+
+    local days=$((total_seconds / 86400))
+    local remaining=$((total_seconds % 86400))
+
+    local hours=$((remaining / 3600))
+    local remaining=$((remaining % 3600))
+
+    local minutes=$((remaining / 60))
+    local seconds=$((remaining % 60))
+
+    #echo "${days}d ${hours}h ${minutes}m ${seconds}s"
+
+    if [[ $days -ge 1 ]]; then
+        echo "Task started ${days} days ago"
+    elif [[ $hours -ge 1 ]]; then
+        echo "Task started ${hours} hours ago"
+    else
+        echo "Task started ${minutes} minutes ago"
+    fi
+}
+
+
+export_task_to_ics() {
+    local ics_file="tasks.ics"
+
+    local EST_tz="America/Toronto"
+
+    local current_zulu=$(date -u +%Y%m%dT%H%M%S) #UTC time (zulu time)
+
+
+
+    #VCALENDAR HEADER, overwrite file.
+    printf "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//CLI Task Manager//EN\r\n" > "$ics_file"
+
+    #for each task, append as a VENEGT block
+    task_num=1
+    while IFS='|' read -r saved_timestamp saved_task saved_urgency saved_start saved_end; do
+        local start_zulu=$(date -d "${saved_start}" +%Y%m%dT%H%M%S)
+
+        local start_day=$(date -d "${saved_start}" +%Y-%m-%d)
+
+        local end_zulu=$(date -d "${start_day} ${saved_end}" +%Y%m%dT%H%M%S)
+
+        printf "BEGIN:VEVENT\r\nUID:task-%s@local\r\nDTSTAMP:%s\r\nDTSTART;TZID=%s:%s\nDTEND;TZID=%s:%s\r\nSUMMARY:%s\r\nDESCRIPTION:Priority: %s\r\nEND:VEVENT\r\n" "$task_num" "$current_zulu" "$EST_tz" "$start_zulu" "$EST_tz" "$end_zulu" "$saved_task" "$saved_urgency" >> "$ics_file"
+
+        ((task_num++))
+
+        done < "$TASK_FILE"
+
+    printf "END:VCALENDAR" >> "$ics_file"
+
+    echo "test export to $ics_file complete..."
+}
+
+
+spaces=50
+command=$1
+
+if [[ "$command" == "list" ]]; then
+    echo " --- TASKS ---"
+
+    task_num=1
+
+    while IFS='|' read -r saved_timestamp saved_task saved_urgency; do
+        if [[ $task_num == 10 ]]; then
+            ((spaces--))
+        fi
+
+        age=$(calculate_task_age "$saved_timestamp")
+
+    	if [[ "$saved_urgency" == "low" ]]; then
+        	color=$GREEN
+    	elif [[ "$saved_urgency" == "medium" ]]; then
+        	color=$YELLOW
+    	elif [[ "$saved_urgency" == "high" ]]; then
+        	color=$RED
+    	elif [[ "$saved_urgency" == "critical" ]]; then
+        	color=$MAGENTA
+        fi
+
+
+	if [[ ${#saved_task} -gt $spaces ]]; then
+	    task_x="${saved_task:0:50}"
+	    task_xs="${saved_task:50}"
+
+	    echo "DEBUG: task_num=[$task_num]"
+    	echo "DEBUG: task_x=[$task_x]"
+    	echo "DEBUG: task_xs=[$task_xs]"
+    	echo "DEBUG: age=[$age]"
+
+	    printf "${color}[%d] %-${spaces}s | %s${RESET}\n" "$task_num" "$task_x" "$age"
+        printf "${color} %s${RESET}\n" "$task_xs"
+	else
+	    printf "${color}[%d] %-${spaces}s | %s${RESET}\n" \
+               "$task_num" "$saved_task" "$age"
+    fi
+    ((task_num++))
+
+    done < "$TASK_FILE"
+
+# if command == done, let arg 2 be task id. If not specified, tell user to specify.
+# use sed (Stream EDitor) to edit text in a file (-i for 'in-place' editing) (d for delete, #d means delete line #)
+elif [[ "$command" == "done" ]]; then
+    task_id=$2
+
+    if [[ -z "$task_id" ]]; then
+        echo "Type task done <task_number>"
+        exit 1
+    fi
+
+    line_copy=$(sed -n "${task_id}p" "$TASK_FILE")
+    task_desc=$(echo "$line_copy" | cut -d'|' -f2)
+    echo "[$task_desc] completed! Great job."
+    sed -i "${task_id}d" "$TASK_FILE"
+
+elif [[ "$command" == "sync" ]]; then
+    export_task_to_ics
+
+# if command is not empty, then take argument 1 as task and urgency as argument 2, low if not specified.
+elif [[ -n "$command" ]]; then
+    task=$1
+    urgency="low"
+    start="null"
+    end="null"
+
+    date_target="start"
+
+    shift 1
+
+    while [[ "$#" -gt 0 ]]; do
+        case $1 in
+            l|Low|low|m|Medium|medium|h|High|high|c|Critical|critical)
+                urgency=$1
+                shift 1
+                ;;
+            to|until|end|ending|-e)
+                date_target="end"
+                shift 1
+                ;;
+            *)
+                if [[ "$date_target" == "start" ]]; then
+                    if [[ "$start" == "null" ]]; then
+                        start=$1
+                    else
+                        start="$start $1"
+                    fi
+                else
+                    if [[ "$end" == "null" ]]; then
+                        end=$1
+                    else
+                        end="$end $1"
+                    fi
+                fi
+                shift 1
+                ;;
+
+        esac
+    done
+
+
+    case "${urgency,,}" in
+	l|Low|low)
+	    urgency="low"
+	    ;;
+	m|Medium|medium)
+	    urgency="medium"
+	    ;;
+	h|High|high)
+	    urgency="high"
+	    ;;
+	c|Critical|critical)
+	    urgency="critical"
+	    ;;
+	*)
+	    urgency="low"
+	    ;;
+    esac
+
+    #u gonna have to add the case logic here lil bro
+    #thinking of implementing shift...
+
+    if [[ ! -f "$TASK_FILE" ]]; then
+        touch "$TASK_FILE"
+    fi
+
+    timestamp=$(date +%s)
+    echo "$timestamp|$task|$urgency|$start|$end" >> "$TASK_FILE" #append
+    echo "Task added: $task (urgency: $urgency)"
+
+else
+    echo "Commands: "
+    echo "    type task <\"your task\"> <urgency> <start> <end>"
+    echo "    urgency is [high] [low] [medium] [critical]"
+    echo "    type task list to view tasks"
+fi
+
+
