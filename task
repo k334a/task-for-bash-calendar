@@ -25,11 +25,11 @@ calculate_task_age() {
     #echo "${days}d ${hours}h ${minutes}m ${seconds}s"
 
     if [[ $days -ge 1 ]]; then
-        echo "Task started ${days} days ago"
+        echo "${days} days ago"
     elif [[ $hours -ge 1 ]]; then
-        echo "Task started ${hours} hours ago"
+        echo "${hours} hours ago"
     else
-        echo "Task started ${minutes} minutes ago"
+        echo "${minutes} minutes ago"
     fi
 }
 
@@ -49,15 +49,18 @@ export_task_to_ics() {
     #for each task, append as a VENEGT block
     task_num=1
     while IFS='|' read -r saved_timestamp saved_task saved_urgency saved_start saved_end; do
-        local start_zulu=$(date -d "${saved_start}" +%Y%m%dT%H%M%S)
 
-        local start_day=$(date -d "${saved_start}" +%Y-%m-%d)
+        if [[ "$saved_start" != "null" || "$saved_end" != "null" ]]; then
+            local start_zulu=$(date -d "${saved_start}" +%Y%m%dT%H%M%S)
 
-        local end_zulu=$(date -d "${start_day} ${saved_end}" +%Y%m%dT%H%M%S)
+            local start_day=$(date -d "${saved_start}" +%Y-%m-%d)
 
-        printf "BEGIN:VEVENT\r\nUID:task-%s@local\r\nDTSTAMP:%s\r\nDTSTART;TZID=%s:%s\nDTEND;TZID=%s:%s\r\nSUMMARY:%s\r\nDESCRIPTION:Priority: %s\r\nEND:VEVENT\r\n" "$task_num" "$current_zulu" "$EST_tz" "$start_zulu" "$EST_tz" "$end_zulu" "$saved_task" "$saved_urgency" >> "$ics_file"
+            local end_zulu=$(date -d "${start_day} ${saved_end}" +%Y%m%dT%H%M%S)
 
-        ((task_num++))
+            printf "BEGIN:VEVENT\r\nUID:task-%s@local\r\nDTSTAMP:%s\r\nDTSTART;TZID=%s:%s\nDTEND;TZID=%s:%s\r\nSUMMARY:%s\r\nDESCRIPTION:Priority: %s\r\nEND:VEVENT\r\n" "$task_num" "$current_zulu" "$EST_tz" "$start_zulu" "$EST_tz" "$end_zulu" "$saved_task" "$saved_urgency" >> "$ics_file"
+
+            ((task_num++))
+        fi
 
         done < "$TASK_FILE"
 
@@ -75,7 +78,7 @@ if [[ "$command" == "list" ]]; then
 
     task_num=1
 
-    while IFS='|' read -r saved_timestamp saved_task saved_urgency; do
+    while IFS='|' read -r saved_timestamp saved_task saved_urgency saved_start saved_end; do
         if [[ $task_num == 10 ]]; then
             ((spaces--))
         fi
@@ -200,6 +203,8 @@ elif [[ -n "$command" ]]; then
     timestamp=$(date +%s)
     echo "$timestamp|$task|$urgency|$start|$end" >> "$TASK_FILE" #append
     echo "Task added: $task (urgency: $urgency)"
+
+    #later, if date should be printed.. if [[ "$start" != "null" && "$start" != "null"]]  
 
 else
     echo "Commands: "
